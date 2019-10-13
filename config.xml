@@ -19,9 +19,10 @@
     <platform name="android">
         <allow-intent href="market:*" />
         <edit-config file="AndroidManifest.xml" mode="merge" target="/manifest/uses-permission" xmlns:android="http://schemas.android.com/apk/res/android">
-            <uses-permission android:name="android.permission.INTERNET" />
+            <uses-feature android:name="android.hardware.bluetooth" />
             <uses-permission android:name="android.permission.BLUETOOTH" />
             <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+            <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
             <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
             <uses-feature android:name="android.hardware.bluetooth_le" android:required="true"/>
         </edit-config>
