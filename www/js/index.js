@@ -1,317 +1,124 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+/* jshint quotmark: false, unused: vars, browser: true */
+/* global cordova, console, $, bluetoothSerial, _, refreshButton, deviceList, previewColor, red, green, blue, disconnectButton, connectionScreen, colorScreen, rgbText, messageDiv */
+'use strict';
+
 var app = {
-    // Application Constructor
     initialize: function() {
-        document.addEventListener('deviceready', this.onDeviceReady.bind(this), false);
+        this.bind();
     },
+    bind: function() {
+        document.addEventListener('deviceready', this.deviceready, false);
+        colorScreen.hidden = true;
+    },
+    deviceready: function() {
 
-    // deviceready Event Handler
-    //
-    // Bind any cordova events here. Common events are:
-    // 'pause', 'resume', etc.
-    onDeviceReady: function() {
-        var img = new Image();
-        img.src = '/img/rose.jpg';
-        var canvas = document.getElementById('canvas');
-        var ctx = canvas.getContext('2d');
-        var imageWidth = 0;
-        var imageHeight = 0;
+        // wire buttons to functions
+        deviceList.ontouchstart = app.connect; // assume not scrolling
+        refreshButton.ontouchstart = app.list;
+        disconnectButton.ontouchstart = app.disconnect;
+
+        // throttle changes
+        var throttledOnColorChange = _.throttle(app.onColorChange, 200);
+        $('input').on('change', throttledOnColorChange);
         
-        function initializeSuccess(result) {
-            if (result.status === "enabled") {
-                log("Bluetooth is enabled.");
-                log(result);
-            }
-            else {
-                document.getElementById("start-scan").disabled = true;
-                log("Bluetooth is not enabled:", "status");
-                log(result, "status");
-            }
+        app.list();
+    },
+    list: function(event) {
+        deviceList.firstChild.innerHTML = "Discovering...";
+        app.setStatus("Looking for Bluetooth Devices...");
+        
+        bluetoothSerial.list(app.ondevicelist, app.generateFailureFunction("List Failed"));
+    },
+    connect: function (e) {
+        app.setStatus("Connecting...");
+        var device = e.target.getAttribute('deviceId');
+        console.log("Requesting connection to " + device);
+        bluetoothSerial.connect(device, app.onconnect, app.ondisconnect);        
+    },
+    disconnect: function(event) {
+        if (event) {
+            event.preventDefault();
         }
-        function handleError(error) {
-            var msg;
-            if (error.error && error.message) {
-                var errorItems = [];
-                if (error.service) {
-                    errorItems.push("service: " + (uuids[error.service] || error.service));
-                }
-                if (error.characteristic) {
-                    errorItems.push("characteristic: " + (uuids[error.characteristic] || error.characteristic));
-                }
-                msg = "Error on " + error.error + ": " + error.message + (errorItems.length && (" (" + errorItems.join(", ") + ")"));
-            }
-            else {
-                msg = error;
-            }
-            log(msg, "error");
-            if (error.error === "read" && error.service && error.characteristic) {
-                reportValue(error.service, error.characteristic, "Error: " + error.message);
-            }
+
+        app.setStatus("Disconnecting...");
+        bluetoothSerial.disconnect(app.ondisconnect);
+    },
+    onconnect: function() {
+        connectionScreen.hidden = true;
+        colorScreen.hidden = false;
+        app.setStatus("Connected.");
+    },
+    ondisconnect: function() {
+        connectionScreen.hidden = false;
+        colorScreen.hidden = true;
+        app.setStatus("Disconnected.");
+    },
+    onColorChange: function (evt) {
+        var c = app.getColor();
+        rgbText.innerText = c;
+        previewColor.style.backgroundColor = "rgb(" + c + ")";
+        app.sendToArduino(c);
+    },
+    getColor: function () {
+        var color = [];
+        color.push(red.value);
+        color.push(green.value);
+        color.push(blue.value);
+        return color.join(',');
+    },
+    sendToArduino: function(c) {
+        bluetoothSerial.write("c" + c + "\n");
+    },
+    timeoutId: 0,
+    setStatus: function(status) {
+        if (app.timeoutId) {
+            clearTimeout(app.timeoutId);
         }
-        function log(msg, level) {
-            level = level || "log";
-            if (typeof msg === "object") {
-                msg = JSON.stringify(msg, null, "  ");
+        messageDiv.innerText = status;
+        app.timeoutId = setTimeout(function() { messageDiv.innerText = ""; }, 4000);
+    },
+    ondevicelist: function(devices) {
+        var listItem, deviceId;
+
+        // remove existing devices
+        deviceList.innerHTML = "";
+        app.setStatus("");
+        
+        devices.forEach(function(device) {
+            listItem = document.createElement('li');
+            listItem.className = "topcoat-list__item";
+            if (device.hasOwnProperty("uuid")) { // TODO https://github.com/don/BluetoothSerial/issues/5
+                deviceId = device.uuid;
+            } else if (device.hasOwnProperty("address")) {
+                deviceId = device.address;
+            } else {
+                deviceId = "ERROR " + JSON.stringify(device);
             }
-            console.log(msg);
-            if (level === "status" || level === "error") {
-                var msgDiv = document.createElement("div");
-                msgDiv.textContent = msg;
-                if (level === "error") {
-                    msgDiv.style.color = "red";
-                }
-                msgDiv.style.padding = "5px 0";
-                msgDiv.style.borderBottom = "rgb(192,192,192) solid 1px";
-                document.getElementById("output").appendChild(msgDiv);
-            }
-        }
-        var foundDevices = [];
-        function startScan() {
-            log("Starting scan for devices...", "status");
-            foundDevices = [];
-            document.getElementById("devices").innerHTML = "";
-            document.getElementById("services").innerHTML = "";
-            document.getElementById("output").innerHTML = "";
-            if (window.cordova.platformId === "windows") {
-                bluetoothle.retrieveConnected(retrieveConnectedSuccess, handleError, {});
-            }
-            else {
-                bluetoothle.startScan(startScanSuccess, handleError, { services: [] });
-            }
-        }
-        function startScanSuccess(result) {
-            log("startScanSuccess(" + result.status + ")");
-            if (result.status === "scanStarted") {
-                log("Scanning for devices (will continue to scan until you select a device)...", "status");
-            }
-            else if (result.status === "scanResult") {
-                if (!foundDevices.some(function (device) {
-                    return device.address === result.address;
-                })) {
-                    log('FOUND DEVICE:');
-                    log(result);
-                    foundDevices.push(result);
-                    addDevice(result.name, result.address);
-                }
-            }
-        }
-        function retrieveConnectedSuccess(result) {
-            log("retrieveConnectedSuccess()");
-            log(result);
-            result.forEach(function (device) {
-                addDevice(device.name, device.address);
-            });
-        }
-        function addDevice(name, address) {
-            var button = document.createElement("button");
-            button.style.width = "100%";
-            button.style.padding = "10px";
-            button.style.fontSize = "16px";
-            button.textContent = name + ": " + address;
-            button.addEventListener("click", function () {
-                document.getElementById("services").innerHTML = "";
-                connect(address);
-            });
-            document.getElementById("devices").appendChild(button);
-        }
-        function connect(address) {
-            log('Connecting to device: ' + address + "...", "status");
-            if (cordova.platformId === "windows") {
-                getDeviceServices(address);
-            }
-            else {
-                stopScan();
-                new Promise(function (resolve, reject) {
-                    bluetoothle.connect(resolve, reject, { address: address });
-                }).then(connectSuccess, handleError);
-            }
-        }
-        function stopScan() {
-            new Promise(function (resolve, reject) {
-                bluetoothle.stopScan(resolve, reject);
-            }).then(stopScanSuccess, handleError);
-        }
-        function stopScanSuccess() {
-            if (!foundDevices.length) {
-                log("NO DEVICES FOUND");
-            }
-            else {
-                log("Found " + foundDevices.length + " devices.", "status");
-            }
-        }
-        function connectSuccess(result) {
-            log("- " + result.status);
-            if (result.status === "connected") {
-                getDeviceServices(result.address);
-            }
-            else if (result.status === "disconnected") {
-                log("Disconnected from device: " + result.address, "status");
-            }
-        }
-        function getDeviceServices(address) {
-            log("Getting device services...", "status");
-            var platform = window.cordova.platformId;
-            if (platform === "android") {
-                new Promise(function (resolve, reject) {
-                    bluetoothle.discover(resolve, reject,
-                        { address: address });
-                }).then(discoverSuccess, handleError);
-            }
-            else if (platform === "windows") {
-                new Promise(function (resolve, reject) {
-                    bluetoothle.services(resolve, reject,
-                        { address: address });
-                }).then(servicesSuccess, handleError);
-            }
-            else {
-                log("Unsupported platform: '" + window.cordova.platformId + "'", "error");
-            }
-        }
-        function discoverSuccess(result) {
-            log("Discover returned with status: " + result.status);
-            if (result.status === "discovered") {
-            // Create a chain of read promises so we don't try to read a property until we've finished
-                // reading the previous property.
-            var readSequence = result.services.reduce(function (sequence, service) {
-                return sequence.then(function () {
-                    return addService(result.address, service.uuid, service.characteristics);
-                });
-            }, Promise.resolve());
-            // Once we're done reading all the values, disconnect
-            readSequence.then(function () {
-                new Promise(function (resolve, reject) {
-                    bluetoothle.disconnect(resolve, reject,
-                        { address: result.address });
-                }).then(connectSuccess, handleError);
-            });
-            }
-        }
-        function servicesSuccess(result) {
-            log("servicesSuccess()");
-            log(result);
-            if (result.status === "services") {
-                var readSequence = result.services.reduce(function (sequence, service) {
-                    return sequence.then(function () {
-                        console.log('Executing promise for service: ' + service);
-                        new Promise(function (resolve, reject) {
-                            bluetoothle.characteristics(resolve, reject,
-                                { address: result.address, service: service });
-                        }).then(characteristicsSuccess, handleError);
-                    }, handleError);
-                }, Promise.resolve());
-                // Once we're done reading all the values, disconnect
-                readSequence.then(function () {
-                    new Promise(function (resolve, reject) {
-                        bluetoothle.disconnect(resolve, reject,
-                            { address: result.address });
-                    }).then(connectSuccess, handleError);
-                });
-            }
-            if (result.status === "services") {
-                result.services.forEach(function (service) {
-                    new Promise(function (resolve, reject) {
-                        bluetoothle.characteristics(resolve, reject,
-                            { address: result.address, service: service });
-                    }).then(characteristicsSuccess, handleError);
-                });
-            }
-        }
-        function characteristicsSuccess(result) {
-            log("characteristicsSuccess()");
-            log(result);
-            if (result.status === "characteristics") {
-                return addService(result.address, result.service, result.characteristics);
-            }
-        }
-        function addService(address, serviceUuid, characteristics) {
-            log('Adding service ' + serviceUuid + '; characteristics:');
-            log(characteristics);
-            var readSequence = Promise.resolve();
-            var wrapperDiv = document.createElement("div");
-            wrapperDiv.className = "service-wrapper";
-            var serviceDiv = document.createElement("div");
-            serviceDiv.className = "service";
-            serviceDiv.textContent = uuids[serviceUuid] || serviceUuid;
-            wrapperDiv.appendChild(serviceDiv);
-            characteristics.forEach(function (characteristic) {
-                var characteristicDiv = document.createElement("div");
-                characteristicDiv.className = "characteristic";
-                var characteristicNameSpan = document.createElement("span");
-                characteristicNameSpan.textContent = (uuids[characteristic.uuid] || characteristic.uuid) + ":";
-                characteristicDiv.appendChild(characteristicNameSpan);
-                characteristicDiv.appendChild(document.createElement("br"));
-                var characteristicValueSpan = document.createElement("span");
-                characteristicValueSpan.id = serviceUuid + "." + characteristic.uuid;
-                characteristicValueSpan.style.color = "blue";
-                characteristicDiv.appendChild(characteristicValueSpan);
-                wrapperDiv.appendChild(characteristicDiv);
-                readSequence = readSequence.then(function () {
-                    return new Promise(function (resolve, reject) {
-                        bluetoothle.read(resolve, reject,
-                            { address: address, service: serviceUuid, characteristic: characteristic.uuid });
-                    }).then(readSuccess, handleError);
-                });
-            });
-            document.getElementById("services").appendChild(wrapperDiv);
-            return readSequence;
-        }
-        function readSuccess(result) {
-            log("readSuccess():");
-            log(result);
-            if (result.status === "read") {
-                reportValue(result.service, result.characteristic, window.atob(result.value));
-            }
-        }
-        function reportValue(serviceUuid, characteristicUuid, value) {
-            document.getElementById(serviceUuid + "." + characteristicUuid).textContent = value;
-        }
-        img.onload = function() {
-          ctx.drawImage(img, 0, 0);
-          imageWidth = (this.width > 240)?240:this.width;
-          imageHeight = (this.height > 240)?240:this.height;
-          img.style.display = 'none';
-        };
-        var sendButton = document.getElementById('send-button');
-        var connectButton = document.getElementById('connect-button');
-        connectButton.onclick = function(){
-            new Promise(function (resolve) {
-            bluetoothle.initialize(resolve, { request: true, statusReceiver: false });
-            }).then(initializeSuccess, handleError);
-        }
-        sendButton.onclick = function(){
-            var imageData = ctx.getImageData(0, 0, imageWidth, imageHeight);
+            listItem.setAttribute('deviceId', device.address);            
+            listItem.innerHTML = device.name + "<br/><i>" + deviceId + "</i>";
+            deviceList.appendChild(listItem);
+        });
+
+        if (devices.length === 0) {
             
+            if (cordova.platformId === "ios") { // BLE
+                app.setStatus("No Bluetooth Peripherals Discovered.");
+            } else { // Android
+                app.setStatus("Please Pair a Bluetooth Device.");
+            }
+
+        } else {
+            app.setStatus("Found " + devices.length + " device" + (devices.length === 1 ? "." : "s."));
         }
     },
-//
-//    // Update DOM on a Received Event
-//    receivedEvent: function(id) {
-//        var parentElement = document.getElementById(id);
-//        var listeningElement = parentElement.querySelector('.listening');
-//        var receivedElement = parentElement.querySelector('.received');
-//
-//        listeningElement.setAttribute('style', 'display:none;');
-//        receivedElement.setAttribute('style', 'display:block;');
-//
-//        console.log('Received Event: ' + id);
-//    }
+    generateFailureFunction: function(message) {
+        var func = function(reason) {
+            var details = "";
+            if (reason) {
+                details += ": " + JSON.stringify(reason);
+            }
+            app.setStatus(message + details);
+        };
+        return func;
+    }
 };
-
-app.initialize();
